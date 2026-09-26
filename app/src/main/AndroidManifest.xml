@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!--
+        隐私契约（与 PriceCapsule 的差异必须显式声明）：
+        PriceCapsule 声明「零网络」—— 由系统强制保证数据不外流。
+        ReadCapsule 无法维持该契约：字幕提取与 LLM 总结必须联网，这是功能前提。
+
+        替代契约：「网络能力单一且可审计」
+          - 仅声明 INTERNET，不声明 ACCESS_NETWORK_STATE / 存储 / 剪贴板读取等其它能力
+          - 全部出站请求集中在 Http.kt（单一出口），可一次性审计
+          - 凭据仅存本机私有数据库，不参与备份（allowBackup=false）
+          - CI 断言：除 INTERNET 外不得出现其它 uses-permission 声明
+    -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <application
+        android:allowBackup="false"
+        android:label="@string/app_name"
+        android:supportsRtl="true"
+        android:usesCleartextTraffic="false"
+        android:theme="@style/Theme.ReadCapsule">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:launchMode="singleTop"
+            android:windowSoftInputMode="adjustResize">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!--
+            BIND_ACCESSIBILITY_SERVICE 由系统在用户手动开启服务时授予，
+            无需 <uses-permission> 声明。
+        -->
+        <service
+            android:name=".ReaderA11yService"
+            android:exported="true"
+            android:label="@string/service_label"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/accessibility_service_config" />
+        </service>
+
+    </application>
+</manifest>

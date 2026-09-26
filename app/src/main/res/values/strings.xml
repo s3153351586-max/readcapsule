@@ -1,0 +1,9 @@
+<resources>
+    <string name="app_name">速读胶囊</string>
+    <string name="service_label">速读胶囊 · 长文/视频总结</string>
+    <string name="service_desc">读取微信公众号/知乎/头条的文章正文，以及 B站视频页的 BV 号，在你点击悬浮球后生成 AI 摘要。仅在点击时联网，内容发送至你自行配置的大模型服务。</string>
+
+    <string name="guide_title">速读胶囊 · 首次设置</string>
+    <string name="btn_enable_a11y">开启无障碍服务</string>
+    <string name="guide_note">开启后：打开公众号文章/知乎长文，右侧出现 📄 小球；打开 B站视频，出现 🎬 小球。点击小球即生成速读卡片。</string>
+</resources>

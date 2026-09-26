@@ -1,0 +1,4 @@
+<resources>
+    <!-- 使用平台内置 Material 主题，省去 AppCompat 依赖。minSdk 26 / targetSdk 34 下无兼容问题。 -->
+    <style name="Theme.ReadCapsule" parent="android:Theme.Material.Light.NoActionBar" />
+</resources>

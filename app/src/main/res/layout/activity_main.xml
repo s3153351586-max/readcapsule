@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    占位资源。真实 UI 由 MainActivity.buildUi() 以代码构建（4 个控件的场景下，
+    inflate + findViewById 两趟开销高于直接 new）。此文件仅保持 layout 目录存在。
+-->
+<merge xmlns:android="http://schemas.android.com/apk/res/android" />

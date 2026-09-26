@@ -1,0 +1,155 @@
+name: build
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  # ============================================================
+  # Job 1: 单元测试 —— 纯 JVM，耗时最短，作为第一道闸门
+  # 失败即整个 workflow 失败，无需等 APK 构建
+  # ============================================================
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v3
+
+      # 这是核心验证：wbi 签名 / BV 提取 / JSON 解析 / 指纹 的真实执行断言。
+      # 这些模块的正确性无法由静态审查证明，必须在纯净环境真实运行。
+      - name: Run unit tests
+        run: ./gradlew :app:testDebugUnitTest --no-daemon --stacktrace
+
+      # 显式断言测试确实执行了，防止「0 个测试」被误判为通过
+      - name: Assert tests actually ran
+        run: |
+          set -e
+          DIR=app/build/test-results/testDebugUnitTest
+          if [ ! -d "$DIR" ]; then
+            echo "FATAL: 未产出测试结果目录 $DIR —— 测试可能根本没运行"
+            exit 1
+          fi
+          FILES=$(find "$DIR" -name 'TEST-*.xml' | wc -l)
+          if [ "$FILES" -eq 0 ]; then
+            echo "FATAL: 无 TEST-*.xml —— 0 个测试类被执行"
+            exit 1
+          fi
+          TOTAL=$(grep -ho 'tests="[0-9]*"' "$DIR"/TEST-*.xml | grep -o '[0-9]*' | paste -sd+ | bc)
+          FAILED=$(grep -ho 'failures="[0-9]*"' "$DIR"/TEST-*.xml | grep -o '[0-9]*' | paste -sd+ | bc)
+          ERRORS=$(grep -ho 'errors="[0-9]*"' "$DIR"/TEST-*.xml | grep -o '[0-9]*' | paste -sd+ | bc)
+          echo "测试类: $FILES  用例: $TOTAL  失败: $FAILED  错误: $ERRORS"
+          if [ "$TOTAL" -lt 60 ]; then
+            echo "FATAL: 用例数 $TOTAL 少于预期 60，测试可能被误删或未编译"
+            exit 1
+          fi
+          if [ "$FAILED" -ne 0 ] || [ "$ERRORS" -ne 0 ]; then
+            echo "FATAL: 存在失败用例"
+            exit 1
+          fi
+          echo "OK: $TOTAL 个用例全部通过"
+
+      # 依赖契约：测试依赖不得进入运行期 classpath
+      - name: Assert no runtime dependency pollution
+        run: ./gradlew :app:assertNoRuntimeDeps --no-daemon
+
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports-${{ github.sha }}
+          path: |
+            app/build/test-results/testDebugUnitTest/**/*.xml
+            app/build/reports/tests/testDebugUnitTest/**
+          if-no-files-found: warn
+          retention-days: 14
+
+  # ============================================================
+  # Job 2: 静态契约 + APK 构建
+  # ============================================================
+  assemble:
+    runs-on: ubuntu-latest
+    needs: test          # 测试不过就不构建，省 CI 时间与额度
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v3
+
+      # 静态契约断言（权限边界、白名单一致性、降级路径、凭据卫生）。
+      # 无 kotlinc 时 Stage 7 自动 SKIP —— 该层已由上面 test job 覆盖。
+      - name: Static contract assertions
+        run: bash verify.sh
+
+      - name: Assemble debug APK
+        run: ./gradlew assembleDebug --no-daemon --stacktrace
+
+      # 显式校验产物存在，缺失即 job 失败，避免静默产出空 artifact
+      - name: Verify APK exists
+        run: |
+          set -e
+          APK=$(find app/build/outputs/apk/debug -name '*.apk' | head -1)
+          if [ -z "$APK" ]; then
+            echo "FATAL: assembleDebug produced no APK"
+            exit 1
+          fi
+          ls -l "$APK"
+          echo "APK_PATH=$APK" >> "$GITHUB_ENV"
+
+      # 权限边界断言：仅允许 INTERNET 一个 uses-permission
+      # （ReadCapsule 需要联网，与 PriceCapsule 的零网络契约不同，此处断言的是"最小化"）
+      - name: Assert minimal permissions
+        run: |
+          set -e
+          MANIFEST=app/src/main/AndroidManifest.xml
+
+          if ! grep -q '<uses-permission[^>]*INTERNET' "$MANIFEST"; then
+            echo "FATAL: 缺少 INTERNET，功能无法工作"
+            exit 1
+          fi
+
+          COUNT=$(grep -o '<uses-permission[^>]*>' "$MANIFEST" | wc -l)
+          if [ "$COUNT" -ne 1 ]; then
+            echo "FATAL: 声明了 $COUNT 个权限，契约要求恰好 1 个（仅 INTERNET）"
+            grep -o '<uses-permission[^>]*>' "$MANIFEST"
+            exit 1
+          fi
+
+          for P in SYSTEM_ALERT_WINDOW RECORD_AUDIO READ_EXTERNAL_STORAGE READ_CLIPBOARD CAMERA; do
+            if grep -q "<uses-permission[^>]*$P" "$MANIFEST"; then
+              echo "FATAL: 出现了未授权权限 $P"
+              exit 1
+            fi
+          done
+
+          echo "OK: 仅声明 INTERNET"
+
+      # 隐私断言：凭据变量不得出现在日志调用中
+      - name: Assert credentials never logged
+        run: |
+          set -e
+          PKG=app/src/main/java/com/readcapsule
+          if grep -nE 'Log\.[dwie]\(.*(sessdata|SESSDATA|apiKey|API_KEY)' "$PKG"/*.kt; then
+            echo "FATAL: 凭据出现在日志调用中 —— 会通过 logcat 泄漏"
+            exit 1
+          fi
+          echo "OK: 凭据未进入日志"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ReadCapsule-debug-${{ github.sha }}
+          path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: warn   # test job 失败时本 job 未执行，APK 本就不存在
+          retention-days: 14
