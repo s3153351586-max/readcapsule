@@ -26,6 +26,17 @@ class JsonCrossValidationTest {
         assertEquivalent(ref, mine, json)
     }
 
+    /**
+     * 取数字并断言。Number? 统一转 Double，null 用 NaN 兜底 ——
+     * JUnit 的 assertEquals(expected, actual, delta) 重载要求非空 Double，
+     * 直接传 Double? 无法通过编译。
+     */
+    private fun numOf(v: Any?, ctx: String): Double =
+        (v as? Double) ?: run {
+            assertEquals("数字类型不匹配: $ctx", true, v is Number)
+            (v as Number).toDouble()
+        }
+
     /** 递归比较两个解析结果。数字统一按 Double 比较（JSON 无整数/浮点之分）。 */
     private fun assertEquivalent(ref: Any?, mine: Any?, ctx: String) {
         when {
@@ -50,9 +61,9 @@ class JsonCrossValidationTest {
             }
             ref is String -> assertEquals("字符串不匹配: $ctx", ref, Json.str(mine))
             ref is Boolean -> assertEquals("布尔不匹配: $ctx", ref, mine as Boolean?)
-            ref is Int -> assertEquals("数字不匹配: $ctx", ref.toDouble(), mine as Double?, 1e-9)
-            ref is Long -> assertEquals("数字不匹配: $ctx", ref.toDouble(), mine as Double?, 1e-9)
-            ref is Double -> assertEquals("数字不匹配: $ctx", ref, mine as Double?, 1e-9)
+            // org.json 依数值形态返回 Int/Long/Double/BigDecimal（如 1.5 -> BigDecimal），
+            // 统一转 Double 比较即可 —— JSON 数值无整数/浮点之分。
+            ref is Number -> assertEquals("数字不匹配: $ctx", ref.toDouble(), numOf(mine, ctx), 1e-9)
             ref === org.json.JSONObject.NULL -> assertEquals("应为 null: $ctx", null, mine)
             else -> assertEquals("未覆盖类型 ${ref!!::class}: $ctx", ref, mine)
         }

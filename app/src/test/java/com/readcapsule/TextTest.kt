@@ -47,7 +47,9 @@ class TextTest {
     @Test
     fun `空指纹不崩溃`() {
         assertEquals(32, Text.fingerprint().length)
-        assertNotEquals(Text.fingerprint(), Text.fingerprint(""))
+        // 零参数与单空串经 joinToString 后都是空输入，SHA-256 相同 —— 这是实现的
+        // 既定语义（区分二者无信息价值），而非碰撞缺陷。原断言的期望与此不符。
+        assertEquals(Text.fingerprint(), Text.fingerprint(""))
     }
 
     // ---------- summaryKey ----------

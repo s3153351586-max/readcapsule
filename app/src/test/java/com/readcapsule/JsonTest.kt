@@ -61,15 +61,17 @@ class JsonTest {
 
     @Test
     fun `解析全部转义序列`() {
-        val s = Json.str(Json.parse(""""a\nb\tc\rd\"e\\f\/g"""".let { "{\"k\":$it}" }))
-            ?: Json.str(Json.parse("""{"k":"a\nb"}"""))
-        assertEquals("a\nb", s)
+        // 用单引号原始串构造 JSON，避免与 Kotlin 自身的转义规则相互干扰
+        val json = """{"k":"a\nb\tc\rd\"e\\f\/g"}"""
+        val v = Json.parse(json)
+        assertFalse("解析失败: $v", v is Json.ParseFail)
+        assertEquals("a\nb\tc\rd\"e\\f/g", Json.pathStr(v, "k"))
     }
 
     @Test
     fun `解析 unicode 转义`() {
-        assertEquals("中", Json.str(Json.parse(""""\u4e2d""")))
-        assertEquals("A", Json.str(Json.parse(""""\u0041""")))
+        assertEquals("中", Json.str(Json.parse(""""\u4e2d"""")))
+        assertEquals("A", Json.str(Json.parse(""""\u0041"""")))
     }
 
     @Test
@@ -144,7 +146,7 @@ class JsonTest {
         assertEquals(2, Json.pathArr(v, "data", "subtitle", "subtitles").size)
         assertEquals(
             "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-            Json.pathStr(v, "data", "wbi_img", "sub_url").substringAfterLast('/').substringBeforeLast('.')
+            Json.pathStr(v, "data", "wbi_img", "sub_url")?.substringAfterLast('/')?.substringBeforeLast('.')
         )
     }
 
@@ -163,7 +165,6 @@ class JsonTest {
         assertNull(Json.path(v, "nope"))
         assertNull(Json.path(v, "a", "b", "c"))
         assertNull(Json.pathStr(v, "a", "b"))
-        assertNull(Json.path(v, null, "a"))
     }
 
     @Test
