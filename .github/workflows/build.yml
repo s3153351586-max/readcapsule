@@ -23,10 +23,16 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v3
 
+      # Windows 提交不记录 Unix 可执行位，gradlew 的 +x 会丢失。
+      # 这行保证无论仓库里权限如何，执行前都先补上；配合 `bash gradlew` 双保险。
+      - name: Make gradlew executable
+        run: chmod +x gradlew
+
+
       # 这是核心验证：wbi 签名 / BV 提取 / JSON 解析 / 指纹 的真实执行断言。
       # 这些模块的正确性无法由静态审查证明，必须在纯净环境真实运行。
       - name: Run unit tests
-        run: ./gradlew :app:testDebugUnitTest --no-daemon --stacktrace
+        run: bash gradlew :app:testDebugUnitTest --no-daemon --stacktrace
 
       # 显式断言测试确实执行了，防止「0 个测试」被误判为通过
       - name: Assert tests actually ran
@@ -58,7 +64,7 @@ jobs:
 
       # 依赖契约：测试依赖不得进入运行期 classpath
       - name: Assert no runtime dependency pollution
-        run: ./gradlew :app:assertNoRuntimeDeps --no-daemon
+        run: bash gradlew :app:assertNoRuntimeDeps --no-daemon
 
       - name: Upload test reports
         if: always()
@@ -87,13 +93,19 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v3
 
+      # Windows 提交不记录 Unix 可执行位，gradlew 的 +x 会丢失。
+      # 这行保证无论仓库里权限如何，执行前都先补上；配合 `bash gradlew` 双保险。
+      - name: Make gradlew executable
+        run: chmod +x gradlew
+
+
       # 静态契约断言（权限边界、白名单一致性、降级路径、凭据卫生）。
       # 无 kotlinc 时 Stage 7 自动 SKIP —— 该层已由上面 test job 覆盖。
       - name: Static contract assertions
         run: bash verify.sh
 
       - name: Assemble debug APK
-        run: ./gradlew assembleDebug --no-daemon --stacktrace
+        run: bash gradlew assembleDebug --no-daemon --stacktrace
 
       # 显式校验产物存在，缺失即 job 失败，避免静默产出空 artifact
       - name: Verify APK exists
