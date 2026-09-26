@@ -24,8 +24,16 @@ import javax.crypto.spec.SecretKeySpec
  */
 object BvExtractor {
 
-    /** B站 BV 号：固定 2 字符前缀 + 10 位 base58（无 0/O/I/l）。 */
-    private val BV = Regex("""BV[1-9A-HJ-NP-Za-km-z]{10}""")
+    /**
+     * B站 BV 号：固定 2 字符前缀 + 10 位 base58（无 0/O/I/l）。
+     *
+     * 前后各加一条边界断言（非数字字母），防止从长串中部截出"看似合法"的 BV 号：
+     * 例如 `BV1Nx411c7xxz`（13 字符）曾被截为 `BV1Nx411c7xx`，`xBV1Nx411c7xxy`
+     * 同样被截取。这类静默截断发生在歧义判定**之前**，会污染输入并绕过本文件
+     * 顶部声明的"频次加权 + 歧义显式报错、绝不猜测"防呆设计 —— 用户会拿到一份
+     * 完全无关视频的摘要且无从察觉。加锚定后此类输入统一走 NotFound/Ambiguous。
+     */
+    private val BV = Regex("""(?<![0-9A-Za-z])BV[1-9A-HJ-NP-Za-km-z]{10}(?![0-9A-Za-z])""")
 
     sealed class Result {
         /** 唯一确定。 */
@@ -80,7 +88,7 @@ object BvExtractor {
 /**
  * B站 wbi 签名（纯函数，零依赖，可离线单测）。
  *
- * 背景：2023 年起 B站 `x/player/*` 系列接口要求 wbi 签名，缺失则返回 -403。
+ * 背景：2023 年起 B站 x/player 系列接口要求 wbi 签名，缺失则返回 -403。
  * 签名流程（公开逆向结论，此处为独立实现）：
  *  1. 从 nav 接口取 img_url / sub_url，各抽 32 位 hex 拼接成 64 位 key
  *  2. 用固定乱序表重排，得到 mixin_key

@@ -49,12 +49,26 @@ object Json {
         else -> null
     }
 
-    /** 按路径取值：path 为 key 序列，逐层下钻，任一层缺失返回 null。 */
+    /**
+     * 按路径取值：path 为 key 序列，逐层下钻，任一层缺失返回 null。
+     *
+     * 路径段为纯数字且当前层是数组时，按数组下标解释（覆盖 `choices[0].message`
+     * 这类 JSONPath 风格访问）；否则按对象键解释。如此 `{"0":"x"}` 这种以数字
+     * 作键的对象仍可正常下钻，两种语义不冲突。
+     *
+     * 注：LlmClient 取 LLM 响应的 `choices[0].message.content` 依赖本行为；
+     * 在支持数字下标之前，该调用恒返回 null，导致摘要功能整条链路失效。
+     */
     fun path(root: Any?, vararg path: String): Any? {
         var cur: Any? = root
         for (k in path) {
-            val m = obj(cur) ?: return null
-            cur = m[k] ?: return null
+            val idx = k.toIntOrNull()
+            cur = if (idx != null && cur is List<*>) {
+                cur.getOrNull(idx) ?: return null
+            } else {
+                val m = obj(cur) ?: return null
+                m[k] ?: return null
+            }
         }
         return cur
     }
@@ -161,6 +175,11 @@ object Json {
         fun numberValue(): Double {
             val start = i
             if (peek() == '-' || peek() == '+') i++
+            // JSON 规范要求整数部分至少一位数字，`.5` / `-.5` 属非法。
+            // 此前实现会放过 `.5`（toDoubleOrNull 接受），与"语法错误显式失败"契约冲突。
+            if (i >= s.length || !s[i].isDigit()) {
+                throw IllegalStateException("bad number: integer part required at $i")
+            }
             while (i < s.length && (s[i].isDigit() || s[i] == '.' ||
                         s[i] == 'e' || s[i] == 'E' || s[i] == '-' || s[i] == '+')
             ) i++

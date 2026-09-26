@@ -11,6 +11,7 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityNodeInfo
+import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
@@ -30,7 +31,7 @@ import kotlin.math.abs
 class CapsuleOverlay(
     private val ctx: Context,
     private val onAction: (Action) -> Unit
-) : View(ctx) {
+) : FrameLayout(ctx) {
 
     /** 用户操作事件。 */
     sealed class Action {
@@ -41,7 +42,7 @@ class CapsuleOverlay(
         object CopyText : Action()
     }
 
-    enum class Mode { ARTICLE, VIDEO }
+    enum class OverlayMode { ARTICLE, VIDEO }
 
     /** 卡片内容态。 */
     sealed class Body {
@@ -52,7 +53,7 @@ class CapsuleOverlay(
     }
 
     private var expanded = false
-    private var mode = Mode.ARTICLE
+    private var mode = OverlayMode.ARTICLE
     private var body: Body = Body.Loading("准备中")
 
     /** 展开态宿主。懒创建，收起时置 null 释放 View 树。 */
@@ -108,7 +109,7 @@ class CapsuleOverlay(
     }
 
     /** 设置形态与内容，并自适应尺寸。 */
-    fun render(m: Mode, b: Body) {
+    fun render(m: OverlayMode, b: Body) {
         mode = m
         body = b
         rebuildCard()
@@ -206,7 +207,7 @@ class CapsuleOverlay(
         paint.color = when (body) {
             is Body.Loading -> colorMuted
             is Body.Error -> Color.parseColor("#B3261E")
-            else -> if (mode == Mode.VIDEO) colorVideo else colorAccent
+            else -> if (mode == OverlayMode.VIDEO) colorVideo else colorAccent
         }
         canvas.drawCircle(cx, cy, rad, paint)
 
@@ -216,7 +217,7 @@ class CapsuleOverlay(
         val glyph = when {
             body is Body.Loading -> "…"
             body is Body.Error -> "!"
-            mode == Mode.VIDEO -> "🎬"
+            mode == OverlayMode.VIDEO -> "🎬"
             else -> "📄"
         }
         // emoji 的字体基线偏移比中文大，微调至视觉居中
@@ -246,7 +247,7 @@ class CapsuleOverlay(
             gravity = Gravity.CENTER_VERTICAL
         }
         header.addView(TextView(ctx).apply {
-            text = if (mode == Mode.VIDEO) "🎬 视频速读" else "📄 长文速读"
+            text = if (mode == OverlayMode.VIDEO) "🎬 视频速读" else "📄 长文速读"
             textSize = 13f
             typeface = Typeface.DEFAULT_BOLD
             setTextColor(colorInk)

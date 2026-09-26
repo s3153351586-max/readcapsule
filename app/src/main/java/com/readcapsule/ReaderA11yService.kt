@@ -425,7 +425,16 @@ class ReaderA11yService : AccessibilityService() {
                 Log.d(TAG, "overlay attach mode=$mode")
                 fresh
             }
-            view.render(mode, body)
+            // Config.Mode 与覆盖层的 OverlayMode 是两套枚举：前者多一个 NONE
+            // （表示"未识别到内容"），覆盖层没有对应形态。NONE 不会走到本分支
+            // （showOrUpdate 只以 ARTICLE/VIDEO 调用），此处 else 为防御性兜底。
+            view.render(
+                when (mode) {
+                    Mode.VIDEO -> CapsuleOverlay.OverlayMode.VIDEO
+                    else -> CapsuleOverlay.OverlayMode.ARTICLE
+                },
+                body
+            )
         } catch (t: Throwable) {
             Log.w(TAG, "overlay attach failed", t)
             overlay = null
