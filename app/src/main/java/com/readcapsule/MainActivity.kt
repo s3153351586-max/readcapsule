@@ -40,6 +40,9 @@ class MainActivity : Activity() {
     private lateinit var modelInput: EditText
     private lateinit var testResult: TextView
 
+    /** 诊断输出区。内容来自服务进程内存，见 buildDiag()。 */
+    private lateinit var diagView: TextView
+
     private val density by lazy { resources.displayMetrics.density }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -80,6 +83,51 @@ class MainActivity : Activity() {
         root.addView(statusView)
         root.addView(space(8))
         root.addView(makeButton("开启无障碍服务") { openAccessibilitySettings() })
+        root.addView(space(24))
+
+        // --- 诊断区（本版新增）---
+        // 目的：不用连电脑、不用 logcat，直接在手机上看到「服务有没有收到事件、
+        // 正文抓到了几个字、因为什么被放弃」。这是定位「不弹球」唯一可靠的依据。
+        root.addView(sectionLabel("诊断 · 抓取轨迹"))
+        root.addView(caption(
+            "先在微信里打开一篇公众号文章，停留 2 秒，再回到本页。\n" +
+                "下面若出现「article FAIL: …」即说明事件已到达、是正文抓取环节的问题；\n" +
+                "若一片空白且显示「服务未连接」，则问题在服务本身没跑起来。"
+        ))
+        diagView = TextView(this).apply {
+            textSize = 11f
+            typeface = Typeface.MONOSPACE
+            setLineSpacing(4f * density, 1f)
+            setTextIsSelectable(true)   // 便于长按复制发给我
+        }
+        root.addView(diagView)
+        root.addView(space(8))
+        root.addView(makeButton("刷新诊断") { refreshStatus() })
+        root.addView(space(8))
+
+        // 手动测试球：二分诊断的核心工具。
+        // 不依赖任何事件或嗅探，直接尝试 addView —— 用来区分
+        // 「overlay 机制坏了」与「事件/嗅探环节没走到」。
+        root.addView(caption(
+            "下面两个按钮绕过所有事件与嗅探逻辑，直接尝试显示悬浮球。\n" +
+                "能显示 → 问题在事件或正文抓取；不能显示 → 问题在悬浮窗本身。"
+        ))
+        root.addView(makeButton("手动显示测试球") {
+            val svc = ReadingServiceHolder.get()
+            testResult.text = if (svc == null) {
+                "服务未连接 —— 无障碍服务没有运行，无法测试悬浮窗。\n" +
+                    "请先确认设置里开关是「已开启」，然后回到本页重试。"
+            } else {
+                svc.showTestBall()
+            }
+            testResult.setTextColor(Color.parseColor("#202124"))
+        })
+        root.addView(space(6))
+        root.addView(makeButton("隐藏测试球") {
+            val svc = ReadingServiceHolder.get()
+            testResult.text = svc?.hideTestBall() ?: "服务未连接"
+            testResult.setTextColor(Color.parseColor("#202124"))
+        })
         root.addView(space(24))
 
         // --- B站凭据 ---
@@ -268,7 +316,15 @@ class MainActivity : Activity() {
         if (!base.isNullOrBlank() && baseInput.text.isNullOrBlank()) baseInput.setText(base)
         if (!model.isNullOrBlank() && modelInput.text.isNullOrBlank()) modelInput.setText(model)
 
+        // 版本横幅放最前面：一眼确认手机上装的是哪一版。
+        // 之前 versionCode 恒为 1，导致无法分辨实际安装的包，
+        // 排查时反复对着旧包找问题 —— 这是必须消除的不确定性。
+        val apk = packageManager.getPackageInfo(packageName, 0)
         statusView.text = buildString {
+            append("⚙ 已安装版本：v${apk.versionName}（build ${apk.longVersionCode}）")
+            append('\n')
+            append("构建标识：DIAG-3")
+            append('\n')
             append(if (a11y) "无障碍服务：已开启 ✓" else "无障碍服务：未开启 ✗  点下方按钮开启")
             append('\n')
             append("B站凭据：")
@@ -281,6 +337,36 @@ class MainActivity : Activity() {
             append('\n')
             append("权限：仅 INTERNET（应用运行期唯一网络能力）")
         }
+
+        // 诊断段：把解析器的内部状态直接摊在这里。
+        // 手机上没有 logcat 可用，而「为什么没出球」的答案只存在于服务进程内存里。
+        diagView.text = buildDiag()
+    }
+
+    /**
+     * 渲染诊断文本。
+     *
+     * 服务未连接时 ReadingServiceHolder 为空 —— 这本身就是一条关键信息：
+     * 说明无障碍服务确实没有在跑（用户以为开了，实际没开，或已被系统杀掉）。
+     */
+    private fun buildDiag(): CharSequence {
+        val svc = ReadingServiceHolder.get()
+            ?: return "服务未连接：无障碍服务未运行，或刚开启尚未生效（开关一次即可重新连接）。\n" +
+                "此时不会有任何悬浮球 —— 这就是原因。"
+
+        val (brief, fail) = svc.lastGrab()
+        val sb = StringBuilder()
+        sb.append("最近一次抓取：")
+        sb.append(if (fail.isEmpty()) "成功\n" else "失败（$fail）\n")
+        sb.append(brief).append('\n')
+        sb.append("──────── 轨迹（最近在后）────────\n")
+        val lines = svc.traceDump()
+        if (lines.isEmpty()) {
+            sb.append("（暂无。请切到微信打开文章页，停留 2 秒，再回到这里。）")
+        } else {
+            for (l in lines.takeLast(25)) sb.append(l).append('\n')
+        }
+        return sb.toString()
     }
 
     private fun hostOf(base: String?): String {
