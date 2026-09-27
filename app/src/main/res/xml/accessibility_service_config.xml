@@ -1,23 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!--
-    packageNames 在系统侧完成过滤：非目标包的事件不会投递到本进程。
-    这是最省电的过滤点，优于在 onAccessibilityEvent 内做字符串比较。
-
-    与 PriceCapsule 的差异：
-      - 目标包扩展为 6 个（B站 x2 / 微信 / 知乎 / 头条 / QQ浏览器）
-      - notificationTimeout 由 200ms 放宽到 300ms：本应用为「用户点击触发」，
-        不依赖事件实时性，放宽可显著降低长文页滚动时的唤醒次数与耗电
-      - 增加 flagIncludeNotImportantViews：公众号文章正文的部分容器
-        在部分 ROM 上被标记为非重要视图，不加此 flag 会抓不全正文
-
-    注意：此处白名单必须与 Config.PACKAGE_MODE 保持一致。
-    verify.sh Stage 3 会断言两处的包名集合完全相同，防止漂移。
--->
 <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
     android:accessibilityEventTypes="typeWindowStateChanged|typeWindowContentChanged|typeViewScrolled"
     android:accessibilityFeedbackType="feedbackGeneric"
-    android:accessibilityFlags="flagDefault|flagReportViewIds|flagRetrieveInteractiveWindows|flagIncludeNotImportantViews"
+    android:accessibilityFlags="flagReportViewIds|flagRetrieveInteractiveWindows|flagIncludeNotImportantViews|flagRequestEnhancedWebAccessibility"
     android:canRetrieveWindowContent="true"
+    android:isAccessibilityTool="true"
     android:notificationTimeout="300"
     android:packageNames="tv.danmaku.bili,com.bilibili.app.in,com.tencent.mm,com.zhihu.android,com.ss.android.article.news,com.tencent.mtt"
     android:description="@string/service_desc" />
