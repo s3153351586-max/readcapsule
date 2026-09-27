@@ -120,26 +120,44 @@ jobs:
           set -e
           MANIFEST=app/src/main/AndroidManifest.xml
 
-          if ! grep -q '<uses-permission[^>]*INTERNET' "$MANIFEST"; then
-            echo "FATAL: 缺少 INTERNET，功能无法工作"
-            exit 1
-          fi
+          # 用 XML 解析而非 grep 计数。
+          #   manifest 的注释里含 "<uses-permission>" 这样的举例文字，grep 是纯
+          #   文本匹配、不认 XML 注释语法，会把注释内容也算作声明，导致
+          #   「明明只有 1 个权限却报 2 个」的假阳性，闸门本身成了故障点。
+          #   XML 解析只看真实节点，注释/缩进/属性顺序都不影响结果。
+          python3 - "$MANIFEST" <<'PYEOF'
+          import sys
+          import xml.etree.ElementTree as ET
 
-          COUNT=$(grep -o '<uses-permission[^>]*>' "$MANIFEST" | wc -l)
-          if [ "$COUNT" -ne 1 ]; then
-            echo "FATAL: 声明了 $COUNT 个权限，契约要求恰好 1 个（仅 INTERNET）"
-            grep -o '<uses-permission[^>]*>' "$MANIFEST"
-            exit 1
-          fi
+          NS = "{http://schemas.android.com/apk/res/android}"
+          root = ET.parse(sys.argv[1]).getroot()
+          perms = [p.get(NS + "name") or "" for p in root.findall("uses-permission")]
 
-          for P in SYSTEM_ALERT_WINDOW RECORD_AUDIO READ_EXTERNAL_STORAGE READ_CLIPBOARD CAMERA; do
-            if grep -q "<uses-permission[^>]*$P" "$MANIFEST"; then
-              echo "FATAL: 出现了未授权权限 $P"
-              exit 1
-            fi
-          done
+          if "android.permission.INTERNET" not in perms:
+              print("FATAL: 缺少 INTERNET，功能无法工作")
+              sys.exit(1)
 
-          echo "OK: 仅声明 INTERNET"
+          if len(perms) != 1:
+              print(f"FATAL: 声明了 {len(perms)} 个权限，契约要求恰好 1 个（仅 INTERNET）")
+              for p in perms:
+                  print(f"  - {p}")
+              sys.exit(1)
+
+          DENIED = (
+              "SYSTEM_ALERT_WINDOW", "RECORD_AUDIO", "READ_EXTERNAL_STORAGE",
+              "READ_CLIPBOARD", "CAMERA",
+          )
+          for p in perms:
+              if p != "android.permission.INTERNET":
+                  print(f"FATAL: 出现了未授权权限 {p}")
+                  sys.exit(1)
+              for d in DENIED:
+                  if d in p:
+                      print(f"FATAL: 出现了未授权权限 {d}")
+                      sys.exit(1)
+
+          print("OK: 仅声明 INTERNET")
+          PYEOF
 
       # 隐私断言：凭据变量不得出现在日志调用中
       - name: Assert credentials never logged
