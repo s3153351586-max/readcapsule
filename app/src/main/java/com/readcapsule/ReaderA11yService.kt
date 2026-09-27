@@ -72,7 +72,72 @@ class ReaderA11yService : AccessibilityService() {
     override fun onServiceConnected() {
         super.onServiceConnected()
         store = Store(applicationContext)
-        Log.d(TAG, "service connected")
+        ReadingServiceHolder.attach(this)
+        tr("service connected（Android ${android.os.Build.VERSION.SDK_INT}）")
+    }
+
+    override fun onUnbind(intent: android.content.Intent?): Boolean {
+        tr("service unbound")
+        ReadingServiceHolder.detach(this)
+        return super.onUnbind(intent)
+    }
+
+    // ==================== 诊断版新增：内存轨迹 ====================
+    // 手机上跑 logcat 不方便，而这一版要回答的问题恰好是「事件到底有没有
+    // 到达、走到了哪一步」。故把关键轨迹留在内存里，App 一读即可看到，
+    // 不依赖电脑、不依赖 logcat 权限。
+    // 容量刻意压到 80 行：只保留最近一段操作，避免长期运行无限增长。
+    private val trace = ArrayDeque<String>()
+
+    private fun tr(line: String) {
+        val ts = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.US)
+            .format(java.util.Date())
+        if (trace.size >= 80) trace.removeFirst()
+        trace.addLast("$ts  $line")
+        Log.d(TAG, line)
+    }
+
+    /** 最近一次抓取的统计，供状态页展示。 */
+    private var lastGrabBrief: String = "（尚未抓取）"
+    private var lastGrabFail: String = ""
+
+    fun traceDump(): List<String> = trace.toList()
+    fun lastGrab(): Pair<String, String> = lastGrabBrief to lastGrabFail
+
+    /**
+     * 手动显示一个测试球。**绕过全部事件与嗅探逻辑**。
+     *
+     * 这是一个关键的二分诊断：把两种完全不同的失败点分开。
+     *   能显示 → overlay 机制本身正常，问题在「事件没到达 / 嗅探没通过」
+     *   不能显示 → overlay 机制本身有问题（窗口权限 / ROM 限制 / 尺寸为 0）
+     *
+     * 之前所有排查都混在一起，无法区分这两者 —— 这是本轮最该补的能力。
+     */
+    fun showTestBall(): String {
+        return try {
+            showOrUpdate(Mode.ARTICLE, CapsuleOverlay.Body.Loading("测试球 · 手动触发", "若能看见说明 overlay 正常"))
+            if (overlay != null) {
+                tr("test-ball: 显示成功")
+                "显示成功 ✓  —— overlay 机制正常，问题在事件或嗅探环节"
+            } else {
+                tr("test-ball: overlay 仍为 null")
+                "失败 ✗ —— addView 抛异常且被吞掉"
+            }
+        } catch (t: Throwable) {
+            tr("test-ball EX: ${t.javaClass.name}: ${t.message}")
+            "失败 ✗ —— ${t.javaClass.simpleName}: ${t.message}"
+        }
+    }
+
+    /** 手动隐藏测试球。 */
+    fun hideTestBall(): String {
+        return try {
+            removeOverlay()
+            tr("test-ball: 已隐藏")
+            "已隐藏"
+        } catch (t: Throwable) {
+            "隐藏失败 —— ${t.javaClass.simpleName}: ${t.message}"
+        }
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
@@ -80,7 +145,19 @@ class ReaderA11yService : AccessibilityService() {
 
         try {
             val pkg = event.packageName?.toString() ?: return
-            val mode = Config.PACKAGE_MODE[pkg] ?: return
+
+            // 原实现：非白名单包在拿到 mode 后直接 return，不留痕迹。
+            // 于是「包名对不上」与「包名对上了但没抓到正文」在现象上完全一样。
+            // 现在把白名单外的包也记一行（限流记录，避免刷屏），便于确认事件的
+            // packageName 与预期是否一致 —— 这是第一个必须排除的假设。
+            val mode = Config.PACKAGE_MODE[pkg]
+            if (mode == null) {
+                if (pkg != lastForeignPkg) {
+                    lastForeignPkg = pkg
+                    tr("skip: 非白名单包 $pkg")
+                }
+                return
+            }
 
             val now = System.currentTimeMillis()
             if (now - lastEventTs < Config.DEBOUNCE_MS) return
@@ -93,10 +170,15 @@ class ReaderA11yService : AccessibilityService() {
                 pendingArticleTitle = null
                 pendingBv = null
                 busy.set(false)
+                tr("enter: $pkg -> $mode")
             }
             currentMode = mode
 
-            val root = rootInActiveWindow ?: return
+            val root = rootInActiveWindow
+            if (root == null) {
+                tr("abort: rootInActiveWindow = null（窗口内容不可读）")
+                return
+            }
 
             when (mode) {
                 Mode.ARTICLE -> sniffArticle(root)
@@ -105,9 +187,13 @@ class ReaderA11yService : AccessibilityService() {
             }
         } catch (t: Throwable) {
             // 管线级兜底：异常逃逸会杀掉无障碍服务
+            tr("EX: ${t.javaClass.simpleName}: ${t.message}")
             Log.w(TAG, "event pipeline degraded", t)
         }
     }
+
+    /** 上一个被跳过的非白名单包，用于去重记录。 */
+    private var lastForeignPkg: String? = null
 
     /**
      * 长文嗅探：抓正文并缓存。**此处不发网络请求**。
@@ -119,6 +205,9 @@ class ReaderA11yService : AccessibilityService() {
 
         when (res) {
             is ArticleParser.Result.Ok -> {
+                lastGrabBrief = res.stats.brief()
+                lastGrabFail = ""
+                tr("article OK: ${res.text.length} 字 / ${res.paraCount} 段 / ${res.source} | ${res.stats.brief()}")
                 // 内容指纹未变则不重建视图，避免滚动时浮窗闪烁
                 if (pendingArticle?.text == res.text && overlay != null) return
                 pendingArticle = res
@@ -127,6 +216,11 @@ class ReaderA11yService : AccessibilityService() {
                 showOrUpdate(Mode.ARTICLE, CapsuleOverlay.Body.Loading(hintForArticle(res)))
             }
             is ArticleParser.Result.TooShort -> {
+                lastGrabBrief = res.stats.brief()
+                lastGrabFail = "${res.fail}(chars=${res.chars})"
+                // 原实现只记在 logcat 里，且 hint 里没有原因。现在把失败类型
+                // 与统计一起打出来 —— 这一行就是本次诊断的核心产出。
+                tr("article FAIL: ${res.fail} chars=${res.chars} | ${res.stats.brief()}")
                 pendingArticle = null
                 hideOverlay("short-${res.chars}")
             }
@@ -162,7 +256,7 @@ class ReaderA11yService : AccessibilityService() {
     }
 
     private fun hintForArticle(res: ArticleParser.Result.Ok): String =
-        "已抓取 ${res.text.length} 字（${res.paraCount} 段）\n点击开始总结"
+        "已抓取 ${res.text.length} 字（${res.paraCount} 段 · ${res.source}）\n点击开始总结"
 
     /** 广度优先收集节点文本，上限见 Config。 */
     private fun collectTexts(root: android.view.accessibility.AccessibilityNodeInfo): List<String> {
@@ -395,6 +489,7 @@ class ReaderA11yService : AccessibilityService() {
     override fun onDestroy() {
         io.shutdownNow()
         removeOverlay()
+        ReadingServiceHolder.detach(this)
         if (::store.isInitialized) store.closeQuietly()
         super.onDestroy()
     }
