@@ -11,8 +11,8 @@ android {
         applicationId = "com.readcapsule"
         minSdk = 26
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 3
+        versionName = "1.3-diag"
     }
 
     buildTypes {
